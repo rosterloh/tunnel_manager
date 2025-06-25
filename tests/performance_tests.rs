@@ -1,5 +1,5 @@
-use tunnel_manager::error::{TunnelError, UiError};
 use std::time::{Duration, Instant};
+use tunnel_manager::error::{TunnelError, UiError};
 
 #[cfg(test)]
 mod performance_tests {
@@ -8,14 +8,14 @@ mod performance_tests {
     #[test]
     fn test_error_creation_performance() {
         let start = Instant::now();
-        
+
         // Create 1000 errors to test performance
         for i in 0..1000 {
             let _error = TunnelError::InvalidDeviceId {
                 device_id: format!("device-{}", i),
             };
         }
-        
+
         let duration = start.elapsed();
         // Should complete in less than 1ms for 1000 error creations
         assert!(duration < Duration::from_millis(1));
@@ -24,7 +24,7 @@ mod performance_tests {
     #[test]
     fn test_error_conversion_performance() {
         let start = Instant::now();
-        
+
         // Test error conversion performance
         for i in 0..1000 {
             let tunnel_error = TunnelError::AwsAuth {
@@ -32,7 +32,7 @@ mod performance_tests {
             };
             let _ui_error: UiError = tunnel_error.into();
         }
-        
+
         let duration = start.elapsed();
         // Should complete in less than 2ms for 1000 conversions
         assert!(duration < Duration::from_millis(2));
@@ -41,7 +41,7 @@ mod performance_tests {
     #[test]
     fn test_error_display_performance() {
         let start = Instant::now();
-        
+
         // Test error display formatting performance
         for i in 0..1000 {
             let error = TunnelError::TunnelNotFound {
@@ -49,7 +49,7 @@ mod performance_tests {
             };
             let _display_string = error.to_string();
         }
-        
+
         let duration = start.elapsed();
         // Should complete in less than 5ms for 1000 display operations
         assert!(duration < Duration::from_millis(5));
@@ -70,7 +70,7 @@ mod performance_tests {
         ];
 
         let start = Instant::now();
-        
+
         // Test UI error message retrieval performance
         for _ in 0..1000 {
             for error in &errors {
@@ -78,7 +78,7 @@ mod performance_tests {
                 let _should_retry = error.should_retry();
             }
         }
-        
+
         let duration = start.elapsed();
         // Should complete in less than 2ms for 5000 operations (1000 iterations * 5 errors)
         assert!(duration < Duration::from_millis(2));
@@ -95,7 +95,7 @@ mod performance_tests {
         }
 
         let start = Instant::now();
-        
+
         // Test async error handling performance
         for i in 0..1000 {
             let result = mock_async_operation(i % 2 == 0).await;
@@ -108,7 +108,7 @@ mod performance_tests {
                 }
             }
         }
-        
+
         let duration = start.elapsed();
         // Should complete in less than 10ms for 1000 async operations
         assert!(duration < Duration::from_millis(10));
@@ -124,8 +124,11 @@ mod stress_tests {
         // Test with very large error messages
         let large_message = "A".repeat(10000);
         let error = TunnelError::connection(large_message.clone());
-        
-        assert_eq!(error.to_string(), format!("Connection failed: {}", large_message));
+
+        assert_eq!(
+            error.to_string(),
+            format!("Connection failed: {}", large_message)
+        );
     }
 
     #[test]
@@ -134,15 +137,15 @@ mod stress_tests {
         let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "File not found");
         let tunnel_error: TunnelError = io_error.into();
         let ui_error: UiError = tunnel_error.into();
-        
+
         assert!(matches!(ui_error, UiError::ConnectionFailed { .. }));
     }
 
     #[test]
     fn test_concurrent_error_creation() {
-        use std::thread;
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
 
         let counter = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![];

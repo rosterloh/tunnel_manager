@@ -1,5 +1,5 @@
-use tunnel_manager::error::{TunnelError, UiError, TunnelResult};
 use std::io;
+use tunnel_manager::error::{TunnelError, TunnelResult, UiError};
 
 #[test]
 fn test_tunnel_error_display() {
@@ -13,7 +13,7 @@ fn test_tunnel_error_display() {
 fn test_tunnel_error_creation_helpers() {
     let error = TunnelError::aws_config("Configuration failed");
     assert!(matches!(error, TunnelError::AwsConfig { .. }));
-    
+
     let error = TunnelError::connection("Connection timeout");
     assert!(matches!(error, TunnelError::Connection { .. }));
 }
@@ -32,7 +32,7 @@ fn test_tunnel_error_to_ui_error_conversion() {
     };
     let ui_error: UiError = tunnel_error.into();
     assert!(matches!(ui_error, UiError::AuthenticationRequired));
-    
+
     let tunnel_error = TunnelError::InvalidDeviceId {
         device_id: "test".to_string(),
     };
@@ -44,10 +44,13 @@ fn test_tunnel_error_to_ui_error_conversion() {
 fn test_ui_error_user_messages() {
     let error = UiError::EmptyDeviceId;
     assert_eq!(error.user_message(), "Please enter a device ID");
-    
+
     let error = UiError::AuthenticationRequired;
-    assert_eq!(error.user_message(), "Authentication required. Please try connecting again.");
-    
+    assert_eq!(
+        error.user_message(),
+        "Authentication required. Please try connecting again."
+    );
+
     let error = UiError::ConnectionFailed {
         message: "Network error".to_string(),
     };
@@ -66,7 +69,7 @@ fn test_tunnel_result_type() {
     fn test_function() -> TunnelResult<String> {
         Ok("success".to_string())
     }
-    
+
     let result = test_function();
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "success");

@@ -1,6 +1,6 @@
-use thiserror::Error;
 use aws_sdk_iotsecuretunneling::error::SdkError;
 use std::io;
+use thiserror::Error;
 
 /// Custom error types for the tunnel manager application
 #[derive(Error, Debug)]
@@ -91,7 +91,8 @@ where
     fn from(err: SdkError<E>) -> Self {
         match err {
             SdkError::DispatchFailure(_) => TunnelError::AwsAuth {
-                message: "Authentication failed. Please run 'aws sso login' to authenticate.".to_string(),
+                message: "Authentication failed. Please run 'aws sso login' to authenticate."
+                    .to_string(),
             },
             _ => TunnelError::AwsSdk(err.to_string()),
         }
@@ -140,7 +141,9 @@ impl UiError {
             UiError::EmptyDeviceId => "Please enter a device ID",
             UiError::ConnectionFailed { message } => message,
             UiError::DisconnectionFailed { message } => message,
-            UiError::AuthenticationRequired => "Authentication required. Please try connecting again.",
+            UiError::AuthenticationRequired => {
+                "Authentication required. Please try connecting again."
+            }
             UiError::Unknown => "An unexpected error occurred",
         }
     }

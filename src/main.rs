@@ -26,14 +26,12 @@ fn main() {
 #[component]
 fn GardinLogo() -> Element {
     let logo = static_bytes(LOGO);
-    rsx!(
-        svg {
-            width: "70",
-            height: "50",
-            svg_data: logo,
-            margin: "0 18 0 0",
-        }
-    )
+    rsx!(svg {
+        width: "70",
+        height: "50",
+        svg_data: logo,
+        margin: "0 18 0 0",
+    })
 }
 
 #[component]
@@ -66,10 +64,10 @@ fn DeviceInput(device_id: Signal<String>) -> Element {
 #[component]
 fn ConnectButton(device_id: Signal<String>, proxy_process: Signal<Option<Child>>) -> Element {
     let mut loading = use_signal(|| false);
-    let mut connected= use_signal(|| false);
+    let mut connected = use_signal(|| false);
     // TODO: Make this an enum rather
-    let mut show_popup = use_signal(|| String::new());
-    
+    let mut show_popup = use_signal(String::new);
+
     rsx!(
         rect {
             width: "flex(1)",
@@ -97,24 +95,25 @@ fn ConnectButton(device_id: Signal<String>, proxy_process: Signal<Option<Child>>
                             connected.set(false);
                             return;
                         }
-                        
+
                         if device_id.read().is_empty() {
                             show_popup.set(String::from("No Device"));
                             return;
                         }
                         loading.set(true);
                         let result = connect_to_tunnel(&device_id.read()).await;
-                        if result.is_err() {
-                            show_popup.set(result.err().unwrap_or_else(|| String::from("Unknown Error")));
-                        } else {
-                            connected.set(true);
-                            proxy_process.set(Some(result.unwrap()));
-                            // let _ = proxy_process.take().unwrap().wait().await;
+                        match result {
+                            Ok(child) => {
+                                connected.set(true);
+                                proxy_process.set(Some(child));
+                                // let _ = proxy_process.take().unwrap().wait().await;
+                            },
+                            Err(e) => show_popup.set(e),
                         }
                         loading.set(false);
                     });
                 },
-                label { 
+                label {
                     if *connected.read() {
                         "Disconnect"
                     } else {

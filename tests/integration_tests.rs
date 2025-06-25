@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use tunnel_manager::aws_client::test_utils::MockTunnelClient;
-    use tunnel_manager::aws_client::TunnelClient;
-    use aws_sdk_iotsecuretunneling::types::TunnelStatus;
     use aws_sdk_iotsecuretunneling::operation::list_tunnels::ListTunnelsOutput;
+    use aws_sdk_iotsecuretunneling::types::TunnelStatus;
     use mockall::predicate::*;
+    use tunnel_manager::aws_client::TunnelClient;
+    use tunnel_manager::aws_client::test_utils::MockTunnelClient;
 
     #[tokio::test]
     async fn test_list_tunnels_success() {
@@ -43,9 +43,7 @@ mod tests {
             .expect_list_tunnels_for_thing()
             .with(eq("empty-device"))
             .times(1)
-            .returning(|_thing_name| {
-                Ok(ListTunnelsOutput::builder().build())
-            });
+            .returning(|_thing_name| Ok(ListTunnelsOutput::builder().build()));
 
         let result = mock_client.list_tunnels_for_thing("empty-device").await;
         assert!(result.is_ok());

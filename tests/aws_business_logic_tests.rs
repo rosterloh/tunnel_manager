@@ -1,12 +1,10 @@
-use tunnel_manager::aws_client::test_utils::MockTunnelClient;
-use tunnel_manager::aws_client::TunnelClient;
-use tunnel_manager::error::{TunnelError, TunnelResult};
-use aws_sdk_iotsecuretunneling::types::{TunnelStatus, TunnelSummary};
 use aws_sdk_iotsecuretunneling::operation::list_tunnels::ListTunnelsOutput;
 use aws_sdk_iotsecuretunneling::operation::open_tunnel::OpenTunnelOutput;
 use aws_sdk_iotsecuretunneling::operation::rotate_tunnel_access_token::RotateTunnelAccessTokenOutput;
-use aws_sdk_iotsecuretunneling::error::SdkError;
+use aws_sdk_iotsecuretunneling::types::{TunnelStatus, TunnelSummary};
 use mockall::predicate::*;
+use tunnel_manager::aws_client::TunnelClient;
+use tunnel_manager::aws_client::test_utils::MockTunnelClient;
 
 /// Test helper to create a mock tunnel summary
 fn create_mock_tunnel_summary(tunnel_id: &str, status: TunnelStatus) -> TunnelSummary {
@@ -32,13 +30,11 @@ mod aws_business_logic_tests {
     #[tokio::test]
     async fn test_open_tunnel_success() {
         let mut mock_client = MockTunnelClient::new();
-        
+
         mock_client
             .expect_open_tunnel_with_config()
             .times(1)
-            .returning(|_config| {
-                Ok(create_mock_open_tunnel_output("new-tunnel-123"))
-            });
+            .returning(|_config| Ok(create_mock_open_tunnel_output("new-tunnel-123")));
 
         let dest_config = aws_sdk_iotsecuretunneling::types::DestinationConfig::builder()
             .thing_name("test-device")
@@ -48,7 +44,7 @@ mod aws_business_logic_tests {
 
         let result = mock_client.open_tunnel_with_config(dest_config).await;
         assert!(result.is_ok());
-        
+
         let output = result.unwrap();
         assert_eq!(output.tunnel_id(), Some("new-tunnel-123"));
         assert_eq!(output.source_access_token(), Some("mock-source-token"));
@@ -69,9 +65,11 @@ mod aws_business_logic_tests {
                     .build())
             });
 
-        let result = mock_client.list_tunnels_for_thing("device-with-open-tunnel").await;
+        let result = mock_client
+            .list_tunnels_for_thing("device-with-open-tunnel")
+            .await;
         assert!(result.is_ok());
-        
+
         let output = result.unwrap();
         let tunnels = output.tunnel_summaries.unwrap();
         assert_eq!(tunnels.len(), 1);
@@ -88,13 +86,18 @@ mod aws_business_logic_tests {
             .times(1)
             .returning(|_thing_name| {
                 Ok(ListTunnelsOutput::builder()
-                    .tunnel_summaries(create_mock_tunnel_summary("tunnel-789", TunnelStatus::Closed))
+                    .tunnel_summaries(create_mock_tunnel_summary(
+                        "tunnel-789",
+                        TunnelStatus::Closed,
+                    ))
                     .build())
             });
 
-        let result = mock_client.list_tunnels_for_thing("device-with-closed-tunnel").await;
+        let result = mock_client
+            .list_tunnels_for_thing("device-with-closed-tunnel")
+            .await;
         assert!(result.is_ok());
-        
+
         let output = result.unwrap();
         let tunnels = output.tunnel_summaries.unwrap();
         assert_eq!(tunnels.len(), 1);
@@ -122,12 +125,14 @@ mod aws_business_logic_tests {
             .build()
             .expect("Failed to build DestinationConfig");
 
-        let result = mock_client.rotate_tunnel_tokens(
-            "tunnel-123",
-            aws_sdk_iotsecuretunneling::types::ClientMode::All,
-            dest_config
-        ).await;
-        
+        let result = mock_client
+            .rotate_tunnel_tokens(
+                "tunnel-123",
+                aws_sdk_iotsecuretunneling::types::ClientMode::All,
+                dest_config,
+            )
+            .await;
+
         assert!(result.is_ok());
         let output = result.unwrap();
         assert_eq!(output.source_access_token(), Some("new-source-token"));
@@ -166,16 +171,24 @@ mod aws_business_logic_tests {
                     .build())
             });
 
-        let result = mock_client.list_tunnels_for_thing("device-with-multiple-tunnels").await;
+        let result = mock_client
+            .list_tunnels_for_thing("device-with-multiple-tunnels")
+            .await;
         assert!(result.is_ok());
-        
+
         let output = result.unwrap();
         let tunnels = output.tunnel_summaries.unwrap();
         assert_eq!(tunnels.len(), 3);
-        
+
         // Verify we have a mix of open and closed tunnels
-        let open_count = tunnels.iter().filter(|t| t.status == Some(TunnelStatus::Open)).count();
-        let closed_count = tunnels.iter().filter(|t| t.status == Some(TunnelStatus::Closed)).count();
+        let open_count = tunnels
+            .iter()
+            .filter(|t| t.status == Some(TunnelStatus::Open))
+            .count();
+        let closed_count = tunnels
+            .iter()
+            .filter(|t| t.status == Some(TunnelStatus::Closed))
+            .count();
         assert_eq!(open_count, 2);
         assert_eq!(closed_count, 1);
     }
@@ -185,7 +198,7 @@ mod aws_business_logic_tests {
         // Test empty device ID
         let empty_device_id = "";
         assert!(empty_device_id.is_empty());
-        
+
         // Test valid device ID format (assuming format like G111070)
         let valid_device_id = "G111070";
         assert!(!valid_device_id.is_empty());
@@ -219,7 +232,10 @@ async fn test_tunnel_lifecycle() {
         .times(1)
         .returning(|_| {
             Ok(ListTunnelsOutput::builder()
-                .tunnel_summaries(create_mock_tunnel_summary("lifecycle-tunnel", TunnelStatus::Open))
+                .tunnel_summaries(create_mock_tunnel_summary(
+                    "lifecycle-tunnel",
+                    TunnelStatus::Open,
+                ))
                 .build())
         });
 
@@ -229,7 +245,10 @@ async fn test_tunnel_lifecycle() {
         .with(eq("lifecycle-tunnel"))
         .times(1)
         .returning(|_| {
-            Ok(aws_sdk_iotsecuretunneling::operation::close_tunnel::CloseTunnelOutput::builder().build())
+            Ok(
+                aws_sdk_iotsecuretunneling::operation::close_tunnel::CloseTunnelOutput::builder()
+                    .build(),
+            )
         });
 
     // Execute the lifecycle
