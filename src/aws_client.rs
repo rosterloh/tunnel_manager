@@ -80,7 +80,7 @@ impl TunnelClient for AwsTunnelClient {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils {
     use super::*;
     use mockall::mock;

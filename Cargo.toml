@@ -5,6 +5,9 @@ edition = "2024"
 build = "build.rs"
 publish = false
 
+[features]
+test-utils = ["mockall"]
+
 [dependencies]
 aws-config = { version= "1.8.0", features = ["behavior-version-latest"] }
 aws-sdk-iotsecuretunneling = "1.74.0"
@@ -12,9 +15,10 @@ freya = "0.3.4"
 thiserror = "1.0"
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
+mockall = { version = "0.13", optional = true }
 
 [dev-dependencies]
-mockall = "0.12"
+mockall = "0.13"
 tokio-test = "0.4"
 aws-smithy-runtime-api = "1.0"
 aws-smithy-types = "1.0"
