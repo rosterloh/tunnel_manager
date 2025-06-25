@@ -1,0 +1,19 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build (Debug)",
+            "group": "build",
+            "type": "cargo",
+            "command": "build",
+            "presentation": {
+                "panel": "shared",
+                "reveal": "always",
+                "focus": true
+            },
+            "problemMatcher": [
+                "$rustc"
+            ]
+        },
+    ]
+}
