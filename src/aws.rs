@@ -8,6 +8,7 @@ use aws_sdk_iotsecuretunneling::{
 };
 
 use crate::error::{TunnelError, TunnelResult};
+// use crate::config::{Config, ServiceType};
 
 const PROFILE: &str = "iotmgmt_prod";
 const REGION: &str = "eu-west-1";
@@ -54,7 +55,7 @@ async fn aws_sso_login() -> TunnelResult<()> {
 
 async fn start_localproxy_for_source(region: &str, src_token: &str) -> Result<Child, String> {
     let output = Command::new("localproxy")
-        .current_dir("assets")
+        // .current_dir("assets")
         .args(["-r", region])
         .args(["-s", "SSH=2222,GORT=5555"])
         .args(["-b", "0.0.0.0"])

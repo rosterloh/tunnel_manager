@@ -3,6 +3,7 @@
     windows_subsystem = "windows"
 )]
 
+use std::sync::LazyLock;
 use freya::prelude::*;
 use tokio::process::Child;
 
@@ -10,12 +11,15 @@ use tunnel_manager::aws::connect_to_tunnel;
 
 const ICON: &[u8] = include_bytes!("../assets/icon.png");
 const LOGO: &[u8] = include_bytes!("../assets/logo.svg");
+static WINDOW_TITLE: LazyLock<String>  = LazyLock::new(|| {
+    format!("Gardin Tunnel Manager v{}", env!("CARGO_PKG_VERSION"))
+});
 
 fn main() {
     launch_cfg(
         app,
         LaunchConfig::<()>::new()
-            .with_title("Gardin Tunnel Manager")
+            .with_title(&WINDOW_TITLE)
             .with_size(430., 120.)
             // .with_min_size(430., 120.)
             // .with_max_size(430., 120.)

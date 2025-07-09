@@ -16,3 +16,10 @@ cargo test integration_tests
 cargo test aws_business_logic_tests
 cargo test performance_tests
 ```
+
+### Packaging
+
+```shell
+cargo install cargo-packager --locked
+cargo packager --release
+```
