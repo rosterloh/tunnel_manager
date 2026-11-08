@@ -36,8 +36,8 @@ identifier = "uk.co.gardin.tunnel"
 version = "0.1.0"
 out_dir = "packages"
 icons = [
-  "icon.png",
-  "icon.ico"
+  "assets/icon.png",
+  "assets/icon.ico"
 ]
 resources = [
   "assets"

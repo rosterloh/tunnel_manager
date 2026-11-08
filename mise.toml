@@ -1,0 +1,43 @@
+#:schema https://mise.jdx.dev/schema/mise.json
+
+[settings]
+# Stops a global rust tool's RUSTUP_TOOLCHAIN overriding rust-toolchain.toml
+idiomatic_version_file_enable_tools = ["rust"]
+
+[tasks.build]
+description = "Build a debug binary"
+run = "cargo build"
+
+[tasks."build:release"]
+description = "Build an optimised release binary"
+run = "cargo build --release"
+
+[tasks.dev]
+description = "Run the app in debug mode"
+run = "cargo run"
+
+# --all-features because the mock tests need the test-utils feature
+[tasks.test]
+description = "Run all tests with mocks enabled; extra args filter by test name"
+run = "cargo test --workspace --all-features"
+
+[tasks.lint]
+description = "Run clippy on all targets, denying warnings"
+run = "cargo clippy --all-targets --all-features -- -D warnings"
+
+[tasks.fmt]
+description = "Format all Rust code"
+run = "cargo fmt"
+
+[tasks."fmt:check"]
+description = "Fail if any Rust code is not formatted"
+run = "cargo fmt -- --check"
+
+[tasks.check]
+description = "Run formatting, lint and test checks"
+depends = ["fmt:check", "lint", "test"]
+
+[tasks.package]
+description = "Build release installers into packages/"
+tools = { "cargo:cargo-packager" = "latest" }
+run = "cargo packager --release"

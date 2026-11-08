@@ -1,4 +1,4 @@
-use serde::{de::Error, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error};
 use std::env;
 use std::path::Path;
 use thiserror::Error;
@@ -7,13 +7,13 @@ use thiserror::Error;
 pub enum ConfigError {
     #[error("Failed to load configuration file: {0}")]
     FileLoad(#[from] std::io::Error),
-    
+
     #[error("Failed to parse configuration: {0}")]
     Parse(#[from] toml::de::Error),
-    
+
     #[error("Invalid service type: {service}")]
     InvalidService { service: String },
-    
+
     #[error("Missing required configuration: {field}")]
     MissingRequired { field: String },
 }
@@ -44,7 +44,7 @@ impl std::fmt::Display for ServiceType {
 
 impl std::str::FromStr for ServiceType {
     type Err = ConfigError;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_uppercase().as_str() {
             "SSH" => Ok(ServiceType::SSH),
@@ -61,15 +61,15 @@ pub struct AwsConfig {
     /// AWS profile name
     #[serde(default = "default_aws_profile")]
     pub profile: String,
-    
+
     /// AWS region
     #[serde(default = "default_aws_region")]
     pub region: String,
-    
+
     /// Timeout for AWS operations (in seconds)
     #[serde(default = "default_aws_timeout")]
     pub timeout_seconds: u64,
-    
+
     /// Maximum retry attempts for AWS operations
     #[serde(default = "default_aws_max_retries")]
     pub max_retries: u32,
@@ -81,19 +81,19 @@ pub struct LocalProxyConfig {
     /// Path to the localproxy executable
     #[serde(default = "default_localproxy_path")]
     pub path: String,
-    
+
     /// Bind address for localproxy
     #[serde(default = "default_localproxy_bind")]
     pub bind_address: String,
-    
+
     /// Working directory for localproxy
     #[serde(default = "default_localproxy_workdir")]
     pub working_directory: String,
-    
+
     /// Default services to enable
     #[serde(default = "default_services")]
     pub default_services: Vec<ServiceType>,
-    
+
     /// Service port mappings
     #[serde(default = "default_service_ports")]
     pub service_ports: std::collections::HashMap<ServiceType, u16>,
@@ -105,19 +105,19 @@ pub struct UiConfig {
     /// Application window title
     #[serde(default = "default_window_title")]
     pub window_title: String,
-    
+
     /// Window width
     #[serde(default = "default_window_width")]
     pub window_width: f32,
-    
+
     /// Window height
     #[serde(default = "default_window_height")]
     pub window_height: f32,
-    
+
     /// Default theme (dark/light)
     #[serde(default = "default_theme")]
     pub theme: String,
-    
+
     /// Connection timeout for UI operations (in seconds)
     #[serde(default = "default_ui_timeout")]
     pub connection_timeout: u64,
@@ -129,19 +129,19 @@ pub struct Config {
     /// AWS-related configuration
     #[serde(default)]
     pub aws: AwsConfig,
-    
+
     /// LocalProxy-related configuration
     #[serde(default)]
     pub localproxy: LocalProxyConfig,
-    
+
     /// UI-related configuration
     #[serde(default)]
     pub ui: UiConfig,
-    
+
     /// Enable debug logging
     #[serde(default = "default_debug")]
     pub debug: bool,
-    
+
     /// Log level
     #[serde(default = "default_log_level")]
     pub log_level: String,
@@ -288,7 +288,7 @@ impl Config {
         let config: Config = toml::from_str(&content)?;
         Ok(config)
     }
-    
+
     /// Save configuration to a TOML file
     pub fn to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
         let content = toml::to_string_pretty(self)
@@ -296,7 +296,7 @@ impl Config {
         std::fs::write(path, content)?;
         Ok(())
     }
-    
+
     /// Load configuration with fallback chain: file -> environment -> defaults
     pub fn load() -> Self {
         // Try to load from default config file locations
@@ -306,17 +306,17 @@ impl Config {
             "~/.config/tunnel-manager/config.toml",
             "/etc/tunnel-manager/config.toml",
         ];
-        
+
         for path in &config_paths {
             if let Ok(config) = Self::from_file(path) {
                 return config;
             }
         }
-        
+
         // Fallback to environment variables and defaults
         Self::default()
     }
-    
+
     /// Validate configuration settings
     pub fn validate(&self) -> Result<(), ConfigError> {
         // Validate AWS region format
@@ -325,31 +325,31 @@ impl Config {
                 field: "aws.region".to_string(),
             });
         }
-        
+
         // Validate AWS profile
         if self.aws.profile.is_empty() {
             return Err(ConfigError::MissingRequired {
                 field: "aws.profile".to_string(),
             });
         }
-        
+
         // Validate localproxy path
         if self.localproxy.path.is_empty() {
             return Err(ConfigError::MissingRequired {
                 field: "localproxy.path".to_string(),
             });
         }
-        
+
         // Validate UI dimensions
         if self.ui.window_width <= 0.0 || self.ui.window_height <= 0.0 {
             return Err(ConfigError::MissingRequired {
                 field: "ui.window_width/height must be positive".to_string(),
             });
         }
-        
+
         Ok(())
     }
-    
+
     /// Get service port mapping string for localproxy
     pub fn get_service_mapping(&self) -> String {
         self.localproxy
@@ -359,7 +359,7 @@ impl Config {
             .collect::<Vec<_>>()
             .join(",")
     }
-    
+
     /// Get list of service names for AWS tunnel configuration
     pub fn get_service_names(&self) -> Vec<String> {
         self.localproxy
