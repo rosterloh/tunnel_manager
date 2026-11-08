@@ -5,9 +5,12 @@
 
 use freya::prelude::*;
 use std::time::Duration;
-use tokio::{process::Child, runtime::Builder};
+use tokio::runtime::Builder;
 
-use tunnel_manager::{aws::connect_to_tunnel, error::UiError};
+use tunnel_manager::{
+    aws::{TunnelConnection, connect_to_tunnel, disconnect_from_tunnel},
+    error::UiError,
+};
 
 const ICON: &[u8] = include_bytes!("../assets/icon.png");
 const LOGO: &[u8] = include_bytes!("../assets/logo.svg");
@@ -68,13 +71,13 @@ impl Component for DeviceInput {
 #[derive(PartialEq)]
 struct ConnectButton {
     device_id: State<String>,
-    proxy_process: State<Option<Child>>,
+    connection: State<Option<TunnelConnection>>,
 }
 
 impl Component for ConnectButton {
     fn render(&self) -> impl IntoElement {
         let device_id = self.device_id;
-        let mut proxy_process = self.proxy_process;
+        let mut connection = self.connection;
         let mut loading = use_state(|| false);
         let mut connected = use_state(|| false);
         let mut show_popup = use_state(|| None::<UiError>);
@@ -95,12 +98,15 @@ impl Component for ConnectButton {
                     .on_press(move |_| {
                         spawn(async move {
                             if *connected.peek() {
-                                if let Some(mut child) = proxy_process.take()
-                                    && child.kill().await.is_err()
-                                {
-                                    show_popup.set(Some(UiError::DisconnectionFailed {
-                                        message: "Failed to kill proxy process".to_string(),
-                                    }));
+                                if let Some(active) = connection.take() {
+                                    loading.set(true);
+                                    let result = disconnect_from_tunnel(active).await;
+                                    loading.set(false);
+                                    if let Err(e) = result {
+                                        show_popup.set(Some(UiError::DisconnectionFailed {
+                                            message: e.to_string(),
+                                        }));
+                                    }
                                 }
                                 connected.set(false);
                                 return;
@@ -115,9 +121,9 @@ impl Component for ConnectButton {
                             let result = connect_to_tunnel(&id).await;
                             loading.set(false);
                             match result {
-                                Ok(child) => {
+                                Ok(active) => {
                                     connected.set(true);
-                                    proxy_process.set(Some(child));
+                                    connection.set(Some(active));
                                 }
                                 Err(e) => {
                                     show_popup.set(Some(e.into()));
@@ -127,12 +133,13 @@ impl Component for ConnectButton {
 
                             loop {
                                 tokio::time::sleep(Duration::from_secs(1)).await;
-                                let status = proxy_process.write().as_mut().map(Child::try_wait);
+                                let status =
+                                    connection.write().as_mut().map(|c| c.proxy.try_wait());
                                 match status {
                                     None => return,
                                     Some(Ok(None)) => continue,
                                     Some(_) => {
-                                        proxy_process.set(None);
+                                        connection.set(None);
                                         connected.set(false);
                                         show_popup.set(Some(UiError::ConnectionFailed {
                                             message: "localproxy exited unexpectedly".to_string(),
@@ -164,7 +171,7 @@ fn app() -> impl IntoElement {
     use_init_theme(dark_theme);
 
     let device_id = use_state(String::new);
-    let proxy_process = use_state(|| Option::<Child>::None);
+    let connection = use_state(|| Option::<TunnelConnection>::None);
 
     rect()
         .expanded()
@@ -177,6 +184,6 @@ fn app() -> impl IntoElement {
         .child(DeviceInput { device_id })
         .child(ConnectButton {
             device_id,
-            proxy_process,
+            connection,
         })
 }

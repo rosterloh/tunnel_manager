@@ -11,7 +11,8 @@ use aws_sdk_iotsecuretunneling::types::{
 };
 use aws_smithy_runtime_api::client::result::ConnectorError;
 use mockall::predicate::{always, eq};
-use tunnel_manager::aws::open_tunnel_for_device;
+use tokio::process::Command;
+use tunnel_manager::aws::{TunnelConnection, close_connection, open_tunnel_for_device};
 use tunnel_manager::aws_client::test_utils::MockTunnelClient;
 use tunnel_manager::error::TunnelError;
 
@@ -170,4 +171,50 @@ async fn network_failures_do_not_trigger_login() {
 
     assert!(matches!(io, TunnelError::AwsSdk(_)));
     assert!(matches!(timeout, TunnelError::AwsSdk(_)));
+}
+
+fn running_connection() -> (TunnelConnection, String) {
+    let proxy = Command::new("sleep")
+        .arg("30")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let proc_path = format!("/proc/{}", proxy.id().unwrap());
+    let connection = TunnelConnection {
+        tunnel_id: "open-tunnel".to_string(),
+        proxy,
+    };
+    (connection, proc_path)
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn disconnect_stops_proxy_and_closes_tunnel() {
+    let mut mock = MockTunnelClient::new();
+    expect_close(&mut mock, "open-tunnel");
+    let (connection, proc_path) = running_connection();
+
+    close_connection(&mock, connection).await.unwrap();
+
+    assert!(!std::path::Path::new(&proc_path).exists());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn proxy_is_stopped_even_when_closing_the_tunnel_fails() {
+    let mut mock = MockTunnelClient::new();
+    mock.expect_close_tunnel_by_id()
+        .with(eq("open-tunnel"))
+        .times(1)
+        .return_once(|_| {
+            Err(SdkError::dispatch_failure(ConnectorError::io(
+                "down".into(),
+            )))
+        });
+    let (connection, proc_path) = running_connection();
+
+    let error = close_connection(&mock, connection).await.unwrap_err();
+
+    assert!(matches!(error, TunnelError::AwsSdk(_)));
+    assert!(!std::path::Path::new(&proc_path).exists());
 }

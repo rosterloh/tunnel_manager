@@ -1,4 +1,6 @@
+use std::time::Duration;
 use tokio::process::{Child, Command};
+use tokio::time::timeout;
 
 use aws_config::{BehaviorVersion, Region};
 use aws_sdk_iotsecuretunneling::{
@@ -11,6 +13,13 @@ use crate::error::{TunnelError, TunnelResult};
 
 const PROFILE: &str = "iotmgmt_prod";
 const REGION: &str = "eu-west-1";
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// A running localproxy and the AWS tunnel it is connected to.
+pub struct TunnelConnection {
+    pub tunnel_id: String,
+    pub proxy: Child,
+}
 
 fn destination_config(device_id: &str) -> TunnelResult<DestinationConfig> {
     DestinationConfig::builder()
@@ -42,10 +51,13 @@ async fn open_tunnel<C: TunnelClient>(
 }
 
 async fn aws_sso_login() -> TunnelResult<()> {
-    let output = Command::new("aws")
+    let login = Command::new("aws")
         .args(["sso", "login", "--profile", PROFILE])
-        .output()
+        .kill_on_drop(true)
+        .output();
+    let output = timeout(LOGIN_TIMEOUT, login)
         .await
+        .map_err(|_| TunnelError::aws_auth("Timed out waiting for aws sso login."))?
         .map_err(|e| {
             TunnelError::aws_auth(format!("Failed to execute aws sso login command: {}", e))
         })?;
@@ -108,18 +120,37 @@ pub async fn open_tunnel_for_device<C: TunnelClient>(
     open_tunnel(client, device_id).await
 }
 
-pub async fn connect_to_tunnel(device_id: &str) -> TunnelResult<Child> {
+async fn aws_client() -> AwsTunnelClient {
     let config = aws_config::defaults(BehaviorVersion::latest())
         .profile_name(PROFILE)
         .region(Region::new(REGION))
         .load()
         .await;
-    let client = AwsTunnelClient::new(Client::new(&config));
+    AwsTunnelClient::new(Client::new(&config))
+}
+
+/// Stops the proxy, then closes its tunnel even if the proxy could not be stopped.
+pub async fn close_connection<C: TunnelClient>(
+    client: &C,
+    mut connection: TunnelConnection,
+) -> TunnelResult<()> {
+    let killed = connection.proxy.kill().await;
+    client.close_tunnel_by_id(&connection.tunnel_id).await?;
+    killed.map_err(|e| TunnelError::process_execution(format!("Failed to stop localproxy: {e}")))
+}
+
+pub async fn disconnect_from_tunnel(connection: TunnelConnection) -> TunnelResult<()> {
+    close_connection(&aws_client().await, connection).await
+}
+
+pub async fn connect_to_tunnel(device_id: &str) -> TunnelResult<TunnelConnection> {
+    let client = aws_client().await;
 
     match open_tunnel_for_device(&client, device_id).await {
         Ok((tunnel_id, src_token)) => {
             println!("Tunnel {tunnel_id} open for device {device_id}");
-            start_localproxy_for_source(&src_token)
+            let proxy = start_localproxy_for_source(&src_token)?;
+            Ok(TunnelConnection { tunnel_id, proxy })
         }
         Err(TunnelError::AwsAuth { .. }) => {
             aws_sso_login().await?;
