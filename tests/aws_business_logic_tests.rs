@@ -1,3 +1,6 @@
+// Mock return closures have to match the AWS SDK's large SdkError
+#![allow(clippy::result_large_err)]
+
 use aws_sdk_iotsecuretunneling::operation::list_tunnels::ListTunnelsOutput;
 use aws_sdk_iotsecuretunneling::operation::open_tunnel::OpenTunnelOutput;
 use aws_sdk_iotsecuretunneling::operation::rotate_tunnel_access_token::RotateTunnelAccessTokenOutput;

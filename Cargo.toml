@@ -9,21 +9,21 @@ publish = false
 test-utils = ["mockall"]
 
 [dependencies]
-aws-config = { version= "1.8.10", features = ["behavior-version-latest"] }
-aws-sdk-iotsecuretunneling = "1.90.0"
-freya = "0.3.4"
+aws-config = { version= "1.13.0", features = ["behavior-version-latest"] }
+aws-sdk-iotsecuretunneling = "1.121.0"
+freya = "0.5.0"
 thiserror = "2.0"
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
-mockall = { version = "0.13", optional = true }
+mockall = { version = "0.15", optional = true }
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.9"
+toml = "1.2"
 
 [dev-dependencies]
-mockall = "0.13"
+mockall = "0.15"
 tokio-test = "0.4"
-aws-smithy-runtime-api = "1.0"
-aws-smithy-types = "1.0"
+aws-smithy-runtime-api = "1.20"
+aws-smithy-types = "1.9"
 
 [build-dependencies]
 winresource = "0.1"

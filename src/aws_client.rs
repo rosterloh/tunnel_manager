@@ -95,6 +95,8 @@ impl TunnelClient for AwsTunnelClient {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
+// mock! generates closures returning the AWS SDK's large SdkError
+#[allow(clippy::result_large_err)]
 pub mod test_utils {
     use super::*;
     use mockall::mock;

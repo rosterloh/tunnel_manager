@@ -1,3 +1,6 @@
+// Mock return closures have to match the AWS SDK's large SdkError
+#![allow(clippy::result_large_err)]
+
 #[cfg(test)]
 mod tests {
     use aws_sdk_iotsecuretunneling::operation::list_tunnels::ListTunnelsOutput;
