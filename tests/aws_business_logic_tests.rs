@@ -1,278 +1,173 @@
 // Mock return closures have to match the AWS SDK's large SdkError
 #![allow(clippy::result_large_err)]
 
+use aws_sdk_iotsecuretunneling::error::SdkError;
+use aws_sdk_iotsecuretunneling::operation::close_tunnel::CloseTunnelOutput;
 use aws_sdk_iotsecuretunneling::operation::list_tunnels::ListTunnelsOutput;
 use aws_sdk_iotsecuretunneling::operation::open_tunnel::OpenTunnelOutput;
 use aws_sdk_iotsecuretunneling::operation::rotate_tunnel_access_token::RotateTunnelAccessTokenOutput;
-use aws_sdk_iotsecuretunneling::types::{TunnelStatus, TunnelSummary};
-use mockall::predicate::*;
-use tunnel_manager::aws_client::TunnelClient;
+use aws_sdk_iotsecuretunneling::types::{
+    ClientMode, DestinationConfig, TunnelStatus, TunnelSummary,
+};
+use aws_smithy_runtime_api::client::result::ConnectorError;
+use mockall::predicate::{always, eq};
+use tunnel_manager::aws::open_tunnel_for_device;
 use tunnel_manager::aws_client::test_utils::MockTunnelClient;
+use tunnel_manager::error::TunnelError;
 
-/// Test helper to create a mock tunnel summary
-fn create_mock_tunnel_summary(tunnel_id: &str, status: TunnelStatus) -> TunnelSummary {
-    TunnelSummary::builder()
-        .tunnel_id(tunnel_id)
-        .status(status)
+const DEVICE: &str = "G111070";
+
+fn listing(tunnels: &[(&str, TunnelStatus)]) -> ListTunnelsOutput {
+    let summaries = tunnels
+        .iter()
+        .map(|(id, status)| {
+            TunnelSummary::builder()
+                .tunnel_id(*id)
+                .status(status.clone())
+                .build()
+        })
+        .collect();
+    ListTunnelsOutput::builder()
+        .set_tunnel_summaries(Some(summaries))
         .build()
 }
 
-/// Test helper to create mock tokens response
-fn create_mock_open_tunnel_output(tunnel_id: &str) -> OpenTunnelOutput {
-    OpenTunnelOutput::builder()
-        .tunnel_id(tunnel_id)
-        .source_access_token("mock-source-token")
-        .destination_access_token("mock-dest-token")
-        .build()
+fn expect_listing(mock: &mut MockTunnelClient, tunnels: &'static [(&str, TunnelStatus)]) {
+    mock.expect_list_tunnels_for_thing()
+        .with(eq(DEVICE))
+        .times(1)
+        .returning(move |_| Ok(listing(tunnels)));
 }
 
-#[cfg(test)]
-mod aws_business_logic_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_open_tunnel_success() {
-        let mut mock_client = MockTunnelClient::new();
-
-        mock_client
-            .expect_open_tunnel_with_config()
-            .times(1)
-            .returning(|_config| Ok(create_mock_open_tunnel_output("new-tunnel-123")));
-
-        let dest_config = aws_sdk_iotsecuretunneling::types::DestinationConfig::builder()
-            .thing_name("test-device")
-            .services("SSH")
-            .build()
-            .expect("Failed to build DestinationConfig");
-
-        let result = mock_client.open_tunnel_with_config(dest_config).await;
-        assert!(result.is_ok());
-
-        let output = result.unwrap();
-        assert_eq!(output.tunnel_id(), Some("new-tunnel-123"));
-        assert_eq!(output.source_access_token(), Some("mock-source-token"));
-        assert_eq!(output.destination_access_token(), Some("mock-dest-token"));
-    }
-
-    #[tokio::test]
-    async fn test_list_tunnels_with_open_tunnel() {
-        let mut mock_client = MockTunnelClient::new();
-
-        mock_client
-            .expect_list_tunnels_for_thing()
-            .with(eq("device-with-open-tunnel"))
-            .times(1)
-            .returning(|_thing_name| {
-                Ok(ListTunnelsOutput::builder()
-                    .tunnel_summaries(create_mock_tunnel_summary("tunnel-456", TunnelStatus::Open))
-                    .build())
-            });
-
-        let result = mock_client
-            .list_tunnels_for_thing("device-with-open-tunnel")
-            .await;
-        assert!(result.is_ok());
-
-        let output = result.unwrap();
-        let tunnels = output.tunnel_summaries.unwrap();
-        assert_eq!(tunnels.len(), 1);
-        assert_eq!(tunnels[0].status, Some(TunnelStatus::Open));
-    }
-
-    #[tokio::test]
-    async fn test_list_tunnels_with_closed_tunnel() {
-        let mut mock_client = MockTunnelClient::new();
-
-        mock_client
-            .expect_list_tunnels_for_thing()
-            .with(eq("device-with-closed-tunnel"))
-            .times(1)
-            .returning(|_thing_name| {
-                Ok(ListTunnelsOutput::builder()
-                    .tunnel_summaries(create_mock_tunnel_summary(
-                        "tunnel-789",
-                        TunnelStatus::Closed,
-                    ))
-                    .build())
-            });
-
-        let result = mock_client
-            .list_tunnels_for_thing("device-with-closed-tunnel")
-            .await;
-        assert!(result.is_ok());
-
-        let output = result.unwrap();
-        let tunnels = output.tunnel_summaries.unwrap();
-        assert_eq!(tunnels.len(), 1);
-        assert_eq!(tunnels[0].status, Some(TunnelStatus::Closed));
-    }
-
-    #[tokio::test]
-    async fn test_rotate_tunnel_tokens_success() {
-        let mut mock_client = MockTunnelClient::new();
-
-        mock_client
-            .expect_rotate_tunnel_tokens()
-            .with(eq("tunnel-123"), always(), always())
-            .times(1)
-            .returning(|_tunnel_id, _client_mode, _dest_config| {
-                Ok(RotateTunnelAccessTokenOutput::builder()
-                    .source_access_token("new-source-token")
-                    .destination_access_token("new-dest-token")
-                    .build())
-            });
-
-        let dest_config = aws_sdk_iotsecuretunneling::types::DestinationConfig::builder()
-            .thing_name("test-device")
-            .services("SSH")
-            .build()
-            .expect("Failed to build DestinationConfig");
-
-        let result = mock_client
-            .rotate_tunnel_tokens(
-                "tunnel-123",
-                aws_sdk_iotsecuretunneling::types::ClientMode::All,
-                dest_config,
-            )
-            .await;
-
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert_eq!(output.source_access_token(), Some("new-source-token"));
-        assert_eq!(output.destination_access_token(), Some("new-dest-token"));
-    }
-
-    #[tokio::test]
-    async fn test_close_tunnel_success() {
-        let mut mock_client = MockTunnelClient::new();
-
-        mock_client
-            .expect_close_tunnel_by_id()
-            .with(eq("tunnel-to-close"))
-            .times(1)
-            .returning(|_tunnel_id| {
-                Ok(aws_sdk_iotsecuretunneling::operation::close_tunnel::CloseTunnelOutput::builder().build())
-            });
-
-        let result = mock_client.close_tunnel_by_id("tunnel-to-close").await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_list_tunnels_multiple_tunnels() {
-        let mut mock_client = MockTunnelClient::new();
-
-        mock_client
-            .expect_list_tunnels_for_thing()
-            .with(eq("device-with-multiple-tunnels"))
-            .times(1)
-            .returning(|_thing_name| {
-                Ok(ListTunnelsOutput::builder()
-                    .tunnel_summaries(create_mock_tunnel_summary("tunnel-1", TunnelStatus::Open))
-                    .tunnel_summaries(create_mock_tunnel_summary("tunnel-2", TunnelStatus::Closed))
-                    .tunnel_summaries(create_mock_tunnel_summary("tunnel-3", TunnelStatus::Open))
-                    .build())
-            });
-
-        let result = mock_client
-            .list_tunnels_for_thing("device-with-multiple-tunnels")
-            .await;
-        assert!(result.is_ok());
-
-        let output = result.unwrap();
-        let tunnels = output.tunnel_summaries.unwrap();
-        assert_eq!(tunnels.len(), 3);
-
-        // Verify we have a mix of open and closed tunnels
-        let open_count = tunnels
-            .iter()
-            .filter(|t| t.status == Some(TunnelStatus::Open))
-            .count();
-        let closed_count = tunnels
-            .iter()
-            .filter(|t| t.status == Some(TunnelStatus::Closed))
-            .count();
-        assert_eq!(open_count, 2);
-        assert_eq!(closed_count, 1);
-    }
-
-    #[tokio::test]
-    async fn test_device_id_validation() {
-        // Test empty device ID
-        let empty_device_id = "";
-        assert!(empty_device_id.is_empty());
-
-        // Test valid device ID format (assuming format like G111070)
-        let valid_device_id = "G111070";
-        assert!(!valid_device_id.is_empty());
-        assert!(valid_device_id.starts_with('G'));
-        assert!(valid_device_id.len() > 1);
-    }
+fn targets_device(config: &DestinationConfig) -> bool {
+    config.thing_name() == Some(DEVICE) && config.services() == ["GORT", "SSH"]
 }
 
-/// Integration test that combines multiple operations
-#[tokio::test]
-async fn test_tunnel_lifecycle() {
-    let mut mock_client = MockTunnelClient::new();
-
-    // First, list tunnels (should be empty)
-    mock_client
-        .expect_list_tunnels_for_thing()
-        .with(eq("new-device"))
-        .times(1)
-        .returning(|_| Ok(ListTunnelsOutput::builder().build()));
-
-    // Then open a new tunnel
-    mock_client
-        .expect_open_tunnel_with_config()
-        .times(1)
-        .returning(|_| Ok(create_mock_open_tunnel_output("lifecycle-tunnel")));
-
-    // Then list tunnels again (should show the new tunnel)
-    mock_client
-        .expect_list_tunnels_for_thing()
-        .with(eq("new-device"))
+fn expect_new_tunnel(mock: &mut MockTunnelClient) {
+    mock.expect_open_tunnel_with_config()
+        .withf(targets_device)
         .times(1)
         .returning(|_| {
-            Ok(ListTunnelsOutput::builder()
-                .tunnel_summaries(create_mock_tunnel_summary(
-                    "lifecycle-tunnel",
-                    TunnelStatus::Open,
-                ))
+            Ok(OpenTunnelOutput::builder()
+                .tunnel_id("new-tunnel")
+                .source_access_token("new-source-token")
+                .destination_access_token("new-dest-token")
                 .build())
         });
+}
 
-    // Finally, close the tunnel
-    mock_client
-        .expect_close_tunnel_by_id()
-        .with(eq("lifecycle-tunnel"))
+fn expect_rotation(mock: &mut MockTunnelClient, tunnel_id: &'static str) {
+    mock.expect_rotate_tunnel_tokens()
+        .withf(move |id, mode, config| {
+            id == tunnel_id && *mode == ClientMode::All && targets_device(config)
+        })
         .times(1)
-        .returning(|_| {
-            Ok(
-                aws_sdk_iotsecuretunneling::operation::close_tunnel::CloseTunnelOutput::builder()
-                    .build(),
-            )
+        .returning(|_, _, _| {
+            Ok(RotateTunnelAccessTokenOutput::builder()
+                .source_access_token("rotated-source-token")
+                .destination_access_token("rotated-dest-token")
+                .build())
         });
+}
 
-    // Execute the lifecycle
-    let list_result1 = mock_client.list_tunnels_for_thing("new-device").await;
-    assert!(list_result1.is_ok());
-    assert!(list_result1.unwrap().tunnel_summaries.is_none());
+fn expect_close(mock: &mut MockTunnelClient, tunnel_id: &'static str) {
+    mock.expect_close_tunnel_by_id()
+        .with(eq(tunnel_id))
+        .times(1)
+        .returning(|_| Ok(CloseTunnelOutput::builder().build()));
+}
 
-    let dest_config = aws_sdk_iotsecuretunneling::types::DestinationConfig::builder()
-        .thing_name("new-device")
-        .services("SSH")
-        .build()
-        .expect("Failed to build DestinationConfig");
+fn tunnel(id: &str, token: &str) -> (String, String) {
+    (id.to_string(), token.to_string())
+}
 
-    let open_result = mock_client.open_tunnel_with_config(dest_config).await;
-    assert!(open_result.is_ok());
+#[tokio::test]
+async fn opens_a_new_tunnel_when_device_has_none() {
+    let mut mock = MockTunnelClient::new();
+    expect_listing(&mut mock, &[]);
+    expect_new_tunnel(&mut mock);
 
-    let list_result2 = mock_client.list_tunnels_for_thing("new-device").await;
-    assert!(list_result2.is_ok());
-    let tunnels = list_result2.unwrap().tunnel_summaries.unwrap();
-    assert_eq!(tunnels.len(), 1);
+    let result = open_tunnel_for_device(&mock, DEVICE).await.unwrap();
 
-    let close_result = mock_client.close_tunnel_by_id("lifecycle-tunnel").await;
-    assert!(close_result.is_ok());
+    assert_eq!(result, tunnel("new-tunnel", "new-source-token"));
+}
+
+#[tokio::test]
+async fn reuses_an_open_tunnel_by_rotating_tokens() {
+    let mut mock = MockTunnelClient::new();
+    expect_listing(&mut mock, &[("open-tunnel", TunnelStatus::Open)]);
+    expect_rotation(&mut mock, "open-tunnel");
+
+    let result = open_tunnel_for_device(&mock, DEVICE).await.unwrap();
+
+    assert_eq!(result, tunnel("open-tunnel", "rotated-source-token"));
+}
+
+#[tokio::test]
+async fn closes_stale_tunnels_listed_before_the_open_one() {
+    let mut mock = MockTunnelClient::new();
+    expect_listing(
+        &mut mock,
+        &[
+            ("stale-tunnel", TunnelStatus::Closed),
+            ("open-tunnel", TunnelStatus::Open),
+        ],
+    );
+    expect_close(&mut mock, "stale-tunnel");
+    expect_rotation(&mut mock, "open-tunnel");
+
+    let result = open_tunnel_for_device(&mock, DEVICE).await.unwrap();
+
+    assert_eq!(result, tunnel("open-tunnel", "rotated-source-token"));
+}
+
+#[tokio::test]
+async fn opens_a_new_tunnel_after_closing_stale_ones() {
+    let mut mock = MockTunnelClient::new();
+    expect_listing(&mut mock, &[("stale-tunnel", TunnelStatus::Closed)]);
+    expect_close(&mut mock, "stale-tunnel");
+    expect_new_tunnel(&mut mock);
+
+    let result = open_tunnel_for_device(&mock, DEVICE).await.unwrap();
+
+    assert_eq!(result, tunnel("new-tunnel", "new-source-token"));
+}
+
+#[tokio::test]
+async fn missing_source_token_is_an_error_not_a_panic() {
+    let mut mock = MockTunnelClient::new();
+    expect_listing(&mut mock, &[]);
+    mock.expect_open_tunnel_with_config()
+        .with(always())
+        .times(1)
+        .returning(|_| Ok(OpenTunnelOutput::builder().tunnel_id("new-tunnel").build()));
+
+    let error = open_tunnel_for_device(&mock, DEVICE).await.unwrap_err();
+
+    assert!(matches!(error, TunnelError::TunnelOperation { .. }));
+}
+
+async fn listing_failure(connector_error: ConnectorError) -> TunnelError {
+    let mut mock = MockTunnelClient::new();
+    mock.expect_list_tunnels_for_thing()
+        .times(1)
+        .return_once(move |_| Err(SdkError::dispatch_failure(connector_error)));
+
+    open_tunnel_for_device(&mock, DEVICE).await.unwrap_err()
+}
+
+#[tokio::test]
+async fn untyped_dispatch_failure_means_login_is_needed() {
+    let error = listing_failure(ConnectorError::other("no credentials".into(), None)).await;
+
+    assert!(matches!(error, TunnelError::AwsAuth { .. }));
+}
+
+#[tokio::test]
+async fn network_failures_do_not_trigger_login() {
+    let io = listing_failure(ConnectorError::io("connection refused".into())).await;
+    let timeout = listing_failure(ConnectorError::timeout("timed out".into())).await;
+
+    assert!(matches!(io, TunnelError::AwsSdk(_)));
+    assert!(matches!(timeout, TunnelError::AwsSdk(_)));
 }

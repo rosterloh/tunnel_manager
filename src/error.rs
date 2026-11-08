@@ -1,4 +1,4 @@
-use aws_sdk_iotsecuretunneling::error::SdkError;
+use aws_sdk_iotsecuretunneling::error::{DisplayErrorContext, SdkError};
 use std::io;
 use thiserror::Error;
 
@@ -89,12 +89,17 @@ where
     E: std::error::Error + Send + Sync + 'static,
 {
     fn from(err: SdkError<E>) -> Self {
-        match err {
-            SdkError::DispatchFailure(_) => TunnelError::AwsAuth {
-                message: "Authentication failed. Please run 'aws sso login' to authenticate."
-                    .to_string(),
-            },
-            _ => TunnelError::AwsSdk(err.to_string()),
+        match &err {
+            // Credential failures arrive untyped; network failures are io or timeout
+            SdkError::DispatchFailure(failure)
+                if failure.is_other() && failure.as_other().is_none() =>
+            {
+                TunnelError::AwsAuth {
+                    message: "Authentication failed. Please run 'aws sso login' to authenticate."
+                        .to_string(),
+                }
+            }
+            _ => TunnelError::AwsSdk(DisplayErrorContext(&err).to_string()),
         }
     }
 }

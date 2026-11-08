@@ -4,9 +4,10 @@
 )]
 
 use freya::prelude::*;
+use std::time::Duration;
 use tokio::{process::Child, runtime::Builder};
 
-use tunnel_manager::aws::connect_to_tunnel;
+use tunnel_manager::{aws::connect_to_tunnel, error::UiError};
 
 const ICON: &[u8] = include_bytes!("../assets/icon.png");
 const LOGO: &[u8] = include_bytes!("../assets/logo.svg");
@@ -76,8 +77,7 @@ impl Component for ConnectButton {
         let mut proxy_process = self.proxy_process;
         let mut loading = use_state(|| false);
         let mut connected = use_state(|| false);
-        // TODO: Make this an enum rather
-        let mut show_popup = use_state(String::new);
+        let mut show_popup = use_state(|| None::<UiError>);
 
         rect()
             .width(Size::flex(1.))
@@ -91,33 +91,56 @@ impl Component for ConnectButton {
                     .background((137, 188, 43))
                     .hover_background((117, 168, 23))
                     .color(Color::BLACK)
+                    .enabled(!*loading.read())
                     .on_press(move |_| {
                         spawn(async move {
                             if *connected.peek() {
-                                let mut child = proxy_process.take().unwrap();
-                                if child.kill().await.is_err() {
-                                    show_popup.set(String::from("Failed to kill proxy process"));
+                                if let Some(mut child) = proxy_process.take()
+                                    && child.kill().await.is_err()
+                                {
+                                    show_popup.set(Some(UiError::DisconnectionFailed {
+                                        message: "Failed to kill proxy process".to_string(),
+                                    }));
                                 }
-                                proxy_process.set(None);
                                 connected.set(false);
                                 return;
                             }
 
                             let id = device_id.peek().clone();
                             if id.is_empty() {
-                                show_popup.set(String::from("No Device"));
+                                show_popup.set(Some(UiError::EmptyDeviceId));
                                 return;
                             }
                             loading.set(true);
-                            match connect_to_tunnel(&id).await {
+                            let result = connect_to_tunnel(&id).await;
+                            loading.set(false);
+                            match result {
                                 Ok(child) => {
                                     connected.set(true);
                                     proxy_process.set(Some(child));
-                                    // let _ = proxy_process.take().unwrap().wait().await;
                                 }
-                                Err(e) => show_popup.set(e),
+                                Err(e) => {
+                                    show_popup.set(Some(e.into()));
+                                    return;
+                                }
                             }
-                            loading.set(false);
+
+                            loop {
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                let status = proxy_process.write().as_mut().map(Child::try_wait);
+                                match status {
+                                    None => return,
+                                    Some(Ok(None)) => continue,
+                                    Some(_) => {
+                                        proxy_process.set(None);
+                                        connected.set(false);
+                                        show_popup.set(Some(UiError::ConnectionFailed {
+                                            message: "localproxy exited unexpectedly".to_string(),
+                                        }));
+                                        return;
+                                    }
+                                }
+                            }
                         });
                     })
                     .child(if *connected.read() {
@@ -129,15 +152,9 @@ impl Component for ConnectButton {
             .maybe_child(loading.read().then(CircularLoader::new))
             .child(
                 Popup::new()
-                    .on_close_request(move |_| show_popup.write().clear())
-                    .maybe(!show_popup.read().is_empty(), |popup| {
-                        popup.child(PopupContent::new().child(
-                            if show_popup.read().as_str() == "No Device" {
-                                "Device ID cannot be empty"
-                            } else {
-                                ""
-                            },
-                        ))
+                    .on_close_request(move |_| show_popup.set(None))
+                    .map(show_popup.read().clone(), |popup, error| {
+                        popup.child(PopupContent::new().child(error.user_message().to_string()))
                     }),
             )
     }

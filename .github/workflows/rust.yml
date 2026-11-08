@@ -13,13 +13,14 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  FREYA_SYSTEM_LIBS: libfontconfig1-dev libfreetype6-dev libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev libwayland-dev
 
 jobs:
   clippy_workspace:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
@@ -27,7 +28,7 @@ jobs:
     name: Rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - run: |
           cargo fmt -- --check
@@ -36,14 +37,16 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y $FREYA_SYSTEM_LIBS
       - run: cargo build --all-features --verbose
 
   rust_test:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y $FREYA_SYSTEM_LIBS
       - run: cargo test --workspace --all-features --verbose

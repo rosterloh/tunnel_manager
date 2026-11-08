@@ -3,36 +3,42 @@ use tokio::process::{Child, Command};
 use aws_config::{BehaviorVersion, Region};
 use aws_sdk_iotsecuretunneling::{
     Client,
-    error::SdkError,
     types::{ClientMode, DestinationConfig, TunnelStatus},
 };
 
+use crate::aws_client::{AwsTunnelClient, TunnelClient};
 use crate::error::{TunnelError, TunnelResult};
-// use crate::config::{Config, ServiceType};
 
 const PROFILE: &str = "iotmgmt_prod";
 const REGION: &str = "eu-west-1";
 
-async fn open_tunnel(client: &Client, device_id: &str) -> TunnelResult<(String, String, String)> {
-    let dest = DestinationConfig::builder()
+fn destination_config(device_id: &str) -> TunnelResult<DestinationConfig> {
+    DestinationConfig::builder()
         .thing_name(device_id)
         .services("GORT")
         .services("SSH")
         .build()
-        .expect("Failed to build DestinationConfig for tunnel");
+        .map_err(|e| TunnelError::aws_config(e.to_string()))
+}
 
+fn required(value: Option<&str>, field: &str) -> TunnelResult<String> {
+    value
+        .map(str::to_string)
+        .ok_or_else(|| TunnelError::tunnel_operation(format!("AWS response is missing {field}")))
+}
+
+async fn open_tunnel<C: TunnelClient>(
+    client: &C,
+    device_id: &str,
+) -> TunnelResult<(String, String)> {
     let tokens = client
-        .open_tunnel()
-        .destination_config(dest)
-        .send()
-        .await
-        .map_err(|err| TunnelError::tunnel_operation(format!("Failed to open tunnel: {}", err)))?;
+        .open_tunnel_with_config(destination_config(device_id)?)
+        .await?;
 
-    let tunnel_id = tokens.tunnel_id().unwrap().to_string();
-    let src_token = tokens.source_access_token().unwrap().to_string();
-    let dst_token = tokens.destination_access_token().unwrap().to_string();
-
-    Ok((tunnel_id, src_token, dst_token))
+    Ok((
+        required(tokens.tunnel_id(), "the tunnel ID")?,
+        required(tokens.source_access_token(), "the source access token")?,
+    ))
 }
 
 async fn aws_sso_login() -> TunnelResult<()> {
@@ -53,145 +59,72 @@ async fn aws_sso_login() -> TunnelResult<()> {
     }
 }
 
-async fn start_localproxy_for_source(region: &str, src_token: &str) -> Result<Child, String> {
-    let output = Command::new("localproxy")
-        // .current_dir("assets")
-        .args(["-r", region])
+fn start_localproxy_for_source(src_token: &str) -> TunnelResult<Child> {
+    Command::new("localproxy")
+        .args(["-r", REGION])
         .args(["-s", "SSH=2222,GORT=5555"])
         .args(["-b", "0.0.0.0"])
-        // .args(["-t", &src_token])
         .env("AWSIOT_TUNNEL_ACCESS_TOKEN", src_token)
+        .kill_on_drop(true)
         .spawn()
-        .expect("Failed to execute localproxy command");
-
-    Ok(output)
+        .map_err(|e| TunnelError::localproxy_startup(e.to_string()))
 }
 
-async fn rotate_access_tokens(
-    client: &Client,
+async fn rotate_access_tokens<C: TunnelClient>(
+    client: &C,
     device_id: &str,
     tunnel_id: &str,
-) -> Result<(String, String), String> {
-    let dest = DestinationConfig::builder()
-        .thing_name(device_id)
-        .services("GORT")
-        .services("SSH")
-        .build()
-        .expect("Failed to build DestinationConfig for tunnel");
-
+) -> TunnelResult<String> {
     let response = client
-        .rotate_tunnel_access_token()
-        .tunnel_id(tunnel_id)
-        .client_mode(ClientMode::All)
-        .destination_config(dest)
-        .send()
-        .await
-        .map_err(|e| {
-            format!(
-                "Failed to rotate access tokens for tunnel {}: {}",
-                tunnel_id, e
-            )
-        })?;
+        .rotate_tunnel_tokens(tunnel_id, ClientMode::All, destination_config(device_id)?)
+        .await?;
 
-    let src_token = response.source_access_token().unwrap().to_string();
-    let dst_token = response.destination_access_token().unwrap().to_string();
-
-    Ok((src_token, dst_token))
+    required(response.source_access_token(), "the source access token")
 }
 
-async fn open_tunnel_for_device(
-    client: &Client,
+/// Reuses the device's open tunnel if it has one, otherwise opens a new one.
+/// Returns the tunnel ID and source access token.
+pub async fn open_tunnel_for_device<C: TunnelClient>(
+    client: &C,
     device_id: &str,
-) -> Result<(String, String), String> {
-    match client.list_tunnels().thing_name(device_id).send().await {
-        Ok(response) => {
-            if let Some(tunnel_summaries) = response.tunnel_summaries {
-                if tunnel_summaries.is_empty() {
-                    println!("No tunnels found for device ID: {}", device_id)
-                }
-                // Return first valid tunnel ID
-                for tunnel in &tunnel_summaries {
-                    if *tunnel.status().unwrap() == TunnelStatus::Open {
-                        if tunnel.tunnel_id.is_some() {
-                            let tunnel_id = tunnel.tunnel_id.clone().unwrap();
-                            println!(
-                                "Not Opening a new tunnel. There is a tunnel {} for {} with status {}",
-                                tunnel_id,
-                                device_id,
-                                tunnel.status().unwrap()
-                            );
-                            let (src_token, _) =
-                                rotate_access_tokens(client, device_id, &tunnel_id)
-                                    .await
-                                    .map_err(|_| "Failed to rotate access tokens".to_string())?;
+) -> TunnelResult<(String, String)> {
+    let response = client.list_tunnels_for_thing(device_id).await?;
 
-                            return Ok((tunnel_id, src_token));
-                        }
-                    } else {
-                        println!("Deleting tunnel: {:?}", tunnel);
-                        client
-                            .close_tunnel()
-                            .tunnel_id(tunnel.tunnel_id.clone().unwrap())
-                            .send()
-                            .await
-                            .map_err(|e| format!("Failed to close tunnel: {}", e))?;
+    for tunnel in response.tunnel_summaries() {
+        let Some(tunnel_id) = tunnel.tunnel_id() else {
+            continue;
+        };
 
-                        continue;
-                    }
-                }
-            } else {
-                println!("No tunnels found for device ID: {}", device_id);
-            }
-
-            let (tunnel_id, src_token, _) = open_tunnel(client, device_id)
-                .await
-                .map_err(|e| format!("Failed to open tunnel: {}", e))?;
-
-            Ok((tunnel_id, src_token))
+        if tunnel.status() == Some(&TunnelStatus::Open) {
+            println!("Not opening a new tunnel. Reusing {tunnel_id} for {device_id}");
+            let src_token = rotate_access_tokens(client, device_id, tunnel_id).await?;
+            return Ok((tunnel_id.to_string(), src_token));
         }
-        Err(err) => {
-            if let SdkError::DispatchFailure(_) = err {
-                match aws_sso_login().await {
-                    Ok(_) => {
-                        return Err(String::from("Login successful, please try again."));
-                        // Retry the operation after successful login
-                        // return get_open_tunnels_for_device(client, device_id).await;
-                    }
-                    Err(e) => return Err(e.to_string()),
-                }
-            }
-            Err(format!("Failed to list tunnels: {}", err))
-        }
+
+        println!("Deleting tunnel: {tunnel:?}");
+        client.close_tunnel_by_id(tunnel_id).await?;
     }
+
+    open_tunnel(client, device_id).await
 }
 
-pub async fn connect_to_tunnel(device_id: &str) -> Result<Child, String> {
-    let client = get_client().await?;
-    let region = client
-        .config()
-        .region()
-        .unwrap_or(&Region::from_static(REGION))
-        .to_string();
-
-    match open_tunnel_for_device(&client, device_id).await {
-        Ok((tunnel_id, src_token)) => {
-            println!("Tunnel {} open for device {}", tunnel_id, device_id);
-            let child = start_localproxy_for_source(&region, &src_token)
-                .await
-                .map_err(|e| format!("Failed to start localproxy: {}", e))?;
-
-            Ok(child)
-        }
-        Err(e) => Err(format!("Error retrieving tunnels: {}", e)),
-    }
-}
-
-pub async fn get_client() -> Result<Client, String> {
+pub async fn connect_to_tunnel(device_id: &str) -> TunnelResult<Child> {
     let config = aws_config::defaults(BehaviorVersion::latest())
         .profile_name(PROFILE)
         .region(Region::new(REGION))
         .load()
         .await;
+    let client = AwsTunnelClient::new(Client::new(&config));
 
-    Ok(Client::new(&config))
+    match open_tunnel_for_device(&client, device_id).await {
+        Ok((tunnel_id, src_token)) => {
+            println!("Tunnel {tunnel_id} open for device {device_id}");
+            start_localproxy_for_source(&src_token)
+        }
+        Err(TunnelError::AwsAuth { .. }) => {
+            aws_sso_login().await?;
+            Err(TunnelError::aws_auth("Login successful, please try again."))
+        }
+        Err(e) => Err(e),
+    }
 }

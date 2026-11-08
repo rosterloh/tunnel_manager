@@ -1,0 +1,66 @@
+name: Build localproxy for Windows
+run-name: Build localproxy ${{ inputs.tag }} for Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Upstream release tag, e.g. v3.3.1
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      DEPS_DIR: ${{ github.workspace }}\deps
+      OPENSSL_VERSION: "3.5.9"
+      ZLIB_VERSION: "1.3.2"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: aws-samples/aws-iot-securetunneling-localproxy
+          ref: ${{ inputs.tag }}
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build OpenSSL
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:DEPS_DIR
+          Invoke-WebRequest "https://www.nasm.us/pub/nasm/releasebuilds/2.15.05/win64/nasm-2.15.05-win64.zip" -OutFile nasm.zip
+          Expand-Archive nasm.zip -Force -DestinationPath C:\NASM
+          $env:Path += ";C:\NASM\nasm-2.15.05\"
+          Invoke-WebRequest "https://github.com/openssl/openssl/archive/refs/tags/openssl-$env:OPENSSL_VERSION.zip" -OutFile openssl.zip
+          Expand-Archive openssl.zip -Force
+          cd .\openssl\openssl-openssl-$env:OPENSSL_VERSION\
+          perl Configure VC-WIN64A --prefix="$env:DEPS_DIR\openssl" --openssldir="$env:DEPS_DIR\openssl\ssl"
+          nmake
+          nmake install_sw
+
+      - name: Build zlib
+        run: |
+          git clone -b v$env:ZLIB_VERSION https://github.com/madler/zlib.git
+          cmake -S zlib -B zlib\build -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$env:DEPS_DIR\zlib"
+          cmake --build zlib\build --target install
+
+      - name: Build localproxy
+        # Static OpenSSL needs these system libraries, which upstream's link line omits
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 -DLINK_STATIC_OPENSSL=ON -DCMAKE_EXE_LINKER_FLAGS="crypt32.lib ws2_32.lib" -DWIN32_WINNT=0x0A00 -DBoost_USE_STATIC_LIBS=ON -DLOCALPROXY_DEP_MODE=fetch -DLOCALPROXY_RELEASE=ON "-DCMAKE_PREFIX_PATH=$env:DEPS_DIR\openssl;$env:DEPS_DIR\zlib"
+          msbuild build\localproxy.vcxproj -p:Configuration=Release
+
+      - name: Check OpenSSL is linked statically
+        run: |
+          $dlls = dumpbin /dependents build\bin\Release\localproxy.exe
+          $dlls
+          if ($dlls -match 'libssl|libcrypto|zlib') { throw 'localproxy.exe still depends on a bundled DLL' }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: localproxy-windows-x64
+          path: build/bin/Release/localproxy.exe
+          if-no-files-found: error

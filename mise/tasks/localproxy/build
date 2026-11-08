@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#MISE description="Build the Linux localproxy in Docker from a local upstream checkout and install it into bin/"
+#USAGE arg "[tag]" help="Upstream tag to build (default: newest tag on origin/main)"
+#USAGE flag "--source <dir>" env="LOCALPROXY_SOURCE" default="../aws-iot-securetunneling-localproxy" help="Upstream git checkout"
+set -euo pipefail
+
+src=$usage_source
+git -C "$src" fetch --quiet --tags origin
+tag=${usage_tag:-$(git -C "$src" describe --tags --abbrev=0 origin/main)}
+echo "Building localproxy $tag from $src"
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+git -C "$src" archive "$tag" | tar -x -C "$work"
+
+# Ubuntu 22.04 keeps the glibc requirement low enough for older installs
+docker run --rm \
+  -v "$work:/src:ro" \
+  -v "$PWD/bin:/out" \
+  -e OWNER="$(id -u):$(id -g)" \
+  ubuntu:22.04 bash -euc '
+    apt-get update -qq
+    apt-get install -y -qq build-essential cmake git curl libssl-dev zlib1g-dev >/dev/null
+    cmake -S /src -B /tmp/build -DCMAKE_BUILD_TYPE=Release -DLOCALPROXY_DEP_MODE=fetch -DLOCALPROXY_RELEASE=ON
+    cmake --build /tmp/build --target localproxy -j"$(nproc)"
+    strip /tmp/build/bin/localproxy
+    /tmp/build/bin/localproxy --help >/dev/null
+    install -m 755 -o "${OWNER%:*}" -g "${OWNER#*:}" /tmp/build/bin/localproxy /out/localproxy-x86_64-unknown-linux-gnu
+  '
+
+bin/localproxy-x86_64-unknown-linux-gnu --version
