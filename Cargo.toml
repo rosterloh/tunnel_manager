@@ -1,6 +1,6 @@
 [package]
 name = "tunnel-manager"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 build = "build.rs"
 publish = false
@@ -29,7 +29,7 @@ winresource = "0.1"
 before-packaging-command = "cargo build --release"
 product-name = "Gardin Tunnel Manager"
 identifier = "uk.co.gardin.tunnel"
-version = "0.1.0"
+version = "0.2.0"
 out_dir = "packages"
 icons = [
   "assets/icon.png",
